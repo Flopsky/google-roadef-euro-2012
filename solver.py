@@ -207,7 +207,26 @@ class ProblemConstraints:
                 )
 
     def transient_usage(self):
-        pass
+        for m in range(self.data.nbMachines):
+            for m0 in range(m + 1, self.data.nbMachines - 1):
+                for r in range(self.data.nbResources):
+                    self.model += xsum(
+                        (
+                            (1 - self.vars.initial_assignments[p][m0])
+                            * self.vars.current_assignments[p][m]
+                        )
+                        * self.data.transientStatus[r]
+                        * self.data.processReq[p][r]
+                        for p in range(self.data.nbProcess)
+                    ) <= self.data.hardResCapacities[m][r] - xsum(
+                        (
+                            (self.vars.initial_assignments[p][m0])
+                            * self.vars.current_assignments[p][m]
+                        )
+                        * self.data.transientStatus[r]
+                        * self.data.processReq[p][r]
+                        for p in range(self.data.nbProcess)
+                    )
 
 
 class ProblemObjectives:
@@ -363,12 +382,12 @@ def solve(data: pb.Data, maxTime: int, verbose: bool) -> pb.Solution:
     # Constraints
     constraints = ProblemConstraints(data, model, vars)
     constraints.process_is_assigned_to_only_one_machine()
-    constraints.process_is_reassigned_to_a_new_machine()
+    # constraints.process_is_reassigned_to_a_new_machine()
     constraints.process_is_moving()
     constraints.current_assignments()
     constraints.machine_has_enough_capacity()
     constraints.conflicts()
-    constraints.spread()
+    # constraints.spread()
     constraints.dependency()
     constraints.transient_usage()
 
