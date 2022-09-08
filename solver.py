@@ -29,7 +29,7 @@ def define_variables(data: pb.Data, model: Model):
     return ProblemVariables(
         [
             [
-                model.add_var(var_type=BINARY, name=f"M(p{i}) = m{j}")
+                model.add_var(var_type=BINARY, name="XXs" + str(i) + str(j))
                 for j in range(data.nbMachines)
             ]
             for i in range(data.nbProcess)
@@ -182,10 +182,11 @@ class ProblemConstraints:
                 for p in range(self.data.nbProcess)
                 if self.data.servicesProcess[p] == s
             ]
+
             process_in_dependent_service_assignements = [
                 self.vars.process_is_in_neighborhood[p]
                 for p in range(self.data.nbProcess)
-                if self.data.servicesProcess[p] == self.data.dependencies[s]
+                if self.data.servicesProcess[p] in self.data.dependencies[s]
             ]
             for process_a in process_in_service_assignements:
                 for process_b in process_in_dependent_service_assignements:
@@ -244,6 +245,7 @@ class ProblemObjectives:
                         self.data.nbMachines
                     )  # Soft ressource capacity of a machine
                 )
+                * self.data.weightLoadCost[r]
                 for r in range(self.data.nbResources)
             ),
             "loadCost",
@@ -264,13 +266,92 @@ class ProblemObjectives:
                     )
                     for m in range(self.data.nbMachines)
                 )
+                * self.data.balanceTriples[b].weight
                 for b in range(self.data.nbBalanceTriples)
             ),
             "balanceCost",
         )
 
+    def process_move_cost(self):
+        return self.var(
+            xsum(
+                self.vars.process_is_moving[p] * self.data.processMoveCost[p]
+                for p in range(self.data.nbProcess)
+            )
+            * self.data.processMoveWeight,
+            "process_move_cost",
+        )
+
+    def service_move_cost(self):
+        ds = []
+        U_max = max(
+            [
+                len(
+                    [
+                        p
+                        for p in range(self.data.nbProcess)
+                        if self.data.servicesProcess[p] == s
+                    ]
+                )
+                for s in range(self.data.nbServices)
+            ]
+        )
+        scp = self.model.add_var(var_type=INTEGER, name="service_move_cost")
+        for s in range(self.data.nbServices):
+            x = self.model.add_var(
+                var_type=INTEGER,
+                lb=0,
+                ub=len(
+                    [
+                        p
+                        for p in range(self.data.nbProcess)
+                        if self.data.servicesProcess[p] == s
+                    ]
+                ),
+            )
+            self.model += x == xsum(
+                self.vars.process_is_moving[p]
+                for p in range(self.data.nbProcess)
+                if self.data.servicesProcess[p] == s
+            )
+
+            d = self.model.add_var(var_type=BINARY)
+            ds.append(d)
+
+            self.model += scp >= x
+            self.model += scp <= x + U_max * (1 - d)
+
+        self.model += xsum(d for d in ds) == 1
+
+        return scp * self.data.serviceMoveWeight
+
+    def machine_move_cost(self):
+        return self.var(
+            xsum(
+                xsum(
+                    (
+                        self.vars.initial_assignments[p][m0]
+                        * self.vars.current_assignments[p][m]
+                    )
+                    * self.data.machineMoveCosts[m0, m]
+                    for m in range(self.data.nbMachines)
+                    for m0 in range(self.data.nbMachines)
+                    if m != m0
+                )
+                for p in range(self.data.nbProcess)
+            )
+            * self.data.machineMoveWeight,
+            "machine_move_cost",
+        )
+
     def total(self):
-        self.model.objective = minimize(self.load_cost() + self.balance_cost())
+        self.model.objective = minimize(
+            self.load_cost()
+            + self.balance_cost()
+            + self.process_move_cost()
+            + self.service_move_cost()
+            + self.machine_move_cost()
+        )
 
 
 def solve(data: pb.Data, maxTime: int, verbose: bool) -> pb.Solution:
@@ -294,12 +375,13 @@ def solve(data: pb.Data, maxTime: int, verbose: bool) -> pb.Solution:
     # Objective
     objective = ProblemObjectives(data, model, vars)
     objective.total()
-    objective.balance_cost()
 
     model.write("model.lp")
 
     status = model.optimize(max_seconds=maxTime)
 
+    if status == OptimizationStatus.INFEASIBLE:
+        print("Infeasible")
     if status == OptimizationStatus.OPTIMAL:
         print("optimal solution cost {} found".format(model.objective_value))
     elif status == OptimizationStatus.FEASIBLE:
