@@ -11,10 +11,6 @@ import problem as pb
 T = TypeVar("T")
 
 
-def flatten(l: list[list[T]]) -> list[T]:
-    return list(itertools.chain(*l))
-
-
 class ProblemVariables(NamedTuple):
     assignments: list[list[Var]]
     initial_assignments: list[list[int]]
@@ -73,84 +69,94 @@ def define_variables(data: pb.Data, model: Model):
 
 
 class ProblemConstraints:
-    def __init__(self, data: pb.Data, model: Model, vars: ProblemVariables) -> None:
+    def __init__(self, data: pb.Data, model: Model, vars: ProblemVariables):
         self.data = data
         self.model = model
         self.vars = vars
 
     def process_is_assigned_to_only_one_machine(self):
-        for a_i, a in enumerate(self.vars.assignments):
+        for p in range(self.data.nbProcess):
             self.model += (
-                xsum(a[m] for m in range(self.data.nbMachines)) <= 1,
-                f"process_is_assigned_to_only_one_machine({a_i})",
+                xsum(self.vars.assignments[p][m] for m in range(self.data.nbMachines))
+                <= 1,
+                f"process_is_assigned_to_only_one_machine({p})",
             )
 
     def process_is_reassigned_to_a_new_machine(self):
-        for a_i, a in enumerate(self.vars.assignments):
-            for m_i, (m0, m) in enumerate(zip(self.vars.initial_assignments[a_i], a)):
+        for p in range(self.data.nbProcess):
+            for m in range(self.data.nbMachines):
                 self.model += (
-                    m0 + m <= 1,
-                    f"process_is_reassigned_to_a_new_machine({a_i},{m_i})",
+                    self.vars.initial_assignments[p][m] + self.vars.assignments[p][m]
+                    <= 1,
+                    f"process_is_reassigned_to_a_new_machine({p},{m})",
                 )
 
     def process_is_moving(self):
-        for a_i, a in enumerate(self.vars.assignments):
+        for p in range(self.data.nbProcess):
             self.model += (
-                xsum(a[m] for m in range(self.data.nbMachines))
-                == self.vars.process_is_moving[a_i],
-                f"process_is_moving({a_i})",
+                xsum(self.vars.assignments[p][m] for m in range(self.data.nbMachines))
+                == self.vars.process_is_moving[p],
+                f"process_is_moving({p})",
             )
 
     def current_assignments(self):
-        for a_i, a in enumerate(self.vars.assignments):
+        for p in range(self.data.nbProcess):
             for m in range(self.data.nbMachines):
                 # Linearization of a[m] * self.vars.process_is_moving[a_i]
                 self.model += (
-                    self.vars.assignments_multiplied_by_process_is_moving[a_i][m]
-                    <= a[m]
+                    self.vars.assignments_multiplied_by_process_is_moving[p][m]
+                    <= self.vars.assignments[p][m]
                 )
                 self.model += (
-                    self.vars.assignments_multiplied_by_process_is_moving[a_i][m]
-                    <= self.vars.process_is_moving[a_i]
+                    self.vars.assignments_multiplied_by_process_is_moving[p][m]
+                    <= self.vars.process_is_moving[p]
                 )
                 self.model += (
-                    self.vars.assignments_multiplied_by_process_is_moving[a_i][m]
-                    >= a[m] + self.vars.process_is_moving[a_i] - 1
+                    self.vars.assignments_multiplied_by_process_is_moving[p][m]
+                    >= self.vars.assignments[p][m] + self.vars.process_is_moving[p] - 1
                 )
                 self.model += (
-                    self.vars.assignments_multiplied_by_process_is_moving[a_i][m]
-                    + self.vars.initial_assignments[a_i][m]
-                    * (1 - self.vars.process_is_moving[a_i])
-                ) == self.vars.current_assignments[a_i][m]
+                    self.vars.assignments_multiplied_by_process_is_moving[p][m]
+                    + self.vars.initial_assignments[p][m]
+                    * (1 - self.vars.process_is_moving[p])
+                ) == self.vars.current_assignments[p][m]
+
+    def process_in_service_assignements(self, service):
+        return [
+            self.vars.current_assignments[p]
+            for p in range(self.data.nbProcess)
+            if self.data.servicesProcess[p] == service
+        ]
+
+    def machine_has_enough_capacity(self):
+        for m in range(self.data.nbMachines):
+            for r in range(self.data.nbResources):
+                # hardResCapacities corresponds to the capacity of the machine and not safeResCapacities
+                self.model += (
+                    xsum(
+                        self.vars.current_assignments[p][m] * self.data.processReq[p][r]
+                        for p in range(self.data.nbProcess)
+                    )
+                    <= self.data.hardResCapacities[m][r]
+                )
 
     def conflicts(self):
         for s in range(self.data.nbServices):
-            process_in_service_assignements = [
-                self.vars.current_assignments[p]
-                for p in range(self.data.nbProcess)
-                if self.data.servicesProcess[p] == s
-            ]
             for m in range(self.data.nbMachines):
-                self.model += xsum(a[m] for a in process_in_service_assignements) <= 1
+                self.model += (
+                    xsum(p[m] for p in self.process_in_service_assignements(s)) <= 1
+                )
 
     def spread(self):
         for s in range(self.data.nbServices):
-            process_in_service_assignements = [
-                self.vars.current_assignments[p]
-                for p in range(self.data.nbProcess)
-                if self.data.servicesProcess[p] == s
-            ]
             for l in range(self.data.nbLocations):
-                process_in_location = flatten(
-                    [
-                        [a[m] for a in process_in_service_assignements]
-                        for m in [
-                            m
-                            for m in range(self.data.nbMachines)
-                            if self.data.locations[m] == l
-                        ]
-                    ]
-                )
+                process_in_location = [
+                    p[m]
+                    for p in self.process_in_service_assignements(s)
+                    for m in range(self.data.nbMachines)
+                    if self.data.locations[m] == l
+                ]
+
                 # Linarization of logical OR/max
                 for p in process_in_location:
                     self.model += self.vars.is_location_contain_service[s][l] >= p
@@ -172,34 +178,21 @@ class ProblemConstraints:
                     if self.data.neighborhoods[m] == n
                 )
         for s in range(self.data.nbServices):
-            process_in_service_assignements = [
-                self.vars.process_is_in_neighborhood[p]
-                for p in range(self.data.nbProcess)
-                if self.data.servicesProcess[p] == s
-            ]
-
-            process_in_dependent_service_assignements = [
-                self.vars.process_is_in_neighborhood[p]
-                for p in range(self.data.nbProcess)
-                if self.data.servicesProcess[p] in self.data.dependencies[s]
-            ]
-
-            for process_a in process_in_service_assignements:
-                for process_b in process_in_dependent_service_assignements:
-                    for n_a in process_a:
-                        n_a <= xsum(n_b for n_b in process_b)
-
-    def machine_has_enough_capacity(self):
-        for m in range(self.data.nbMachines):
-            for r in range(self.data.nbResources):
-                # hardResCapacities corresponds to the capacity of the machine and not safeResCapacities
-                self.model += (
-                    xsum(
-                        self.vars.current_assignments[p][m] * self.data.processReq[p][r]
-                        for p in range(self.data.nbProcess)
-                    )
-                    <= self.data.hardResCapacities[m][r]
-                )
+            for d in self.data.dependencies[s]:
+                for n in range(self.data.nbNeighborhoods):
+                    for pa in range(self.data.nbProcess):
+                        if self.data.servicesProcess[pa] == s:
+                            self.model += xsum(
+                                self.vars.current_assignments[pa][m]
+                                for m in range(self.data.nbMachines)
+                                if self.data.neighborhoods[m] == n
+                            ) <= xsum(
+                                self.vars.current_assignments[pb][m]
+                                for m in range(self.data.nbMachines)
+                                if self.data.neighborhoods[m] == n
+                                for pb in range(self.data.nbProcess)
+                                if self.data.servicesProcess[pb] == d
+                            )
 
     def transient_usage(self):
         for m in range(self.data.nbMachines):
@@ -225,7 +218,7 @@ class ProblemConstraints:
 
 
 class ProblemObjectives:
-    def __init__(self, data: pb.Data, model: Model, vars: ProblemVariables) -> None:
+    def __init__(self, data: pb.Data, model: Model, vars: ProblemVariables):
         self.data = data
         self.model = model
         self.vars = vars
@@ -373,12 +366,12 @@ def solve(data: pb.Data, maxTime: int, verbose: bool) -> pb.Solution:
     # Constraints
     constraints = ProblemConstraints(data, model, vars)
     constraints.process_is_assigned_to_only_one_machine()
-    # constraints.process_is_reassigned_to_a_new_machine()
+    constraints.process_is_reassigned_to_a_new_machine()
     constraints.process_is_moving()
     constraints.current_assignments()
     constraints.machine_has_enough_capacity()
     constraints.conflicts()
-    # constraints.spread()
+    constraints.spread()
     constraints.dependency()
     constraints.transient_usage()
 
