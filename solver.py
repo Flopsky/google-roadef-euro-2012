@@ -101,18 +101,23 @@ class ProblemObjectives:
         self.model = model
         self.vars = vars
 
+    def max0(self, x: LinExpr, name: str) -> Var:
+        z = self.model.add_var(var_type=INTEGER, name=name)
+        self.model += z >= x
+        self.model += z >= 0
+        return z
+
     def load_cost(self):
         return xsum(
                 xsum(
-                    xsum(self.vars.current_assignments[p][m] * self.data.processReq[p,r] for p in range(self.data.nbProcess))
-                     - self.data.softResCapacities[m, r] for m in range(self.data.nbMachines)
+                    self.max0(xsum(self.vars.current_assignments[p][m] * self.data.processReq[p,r] for p in range(self.data.nbProcess)) - self.data.softResCapacities[m, r], f"Sum(max(0, U({m}, {r}) - SC({m}, {r})))")
+                    for m in range(self.data.nbMachines) # Soft ressource capacity of a machine
                 ) for r in range(self.data.nbResources)
             )
                 
     def total(self): 
-        self.model.objective = self.load_cost()
-
-                                             
+        self.model.objective = minimize(self.load_cost())
+                                
 def solve(data: pb.Data, maxTime: int, verbose: bool) -> pb.Solution:
     model = Model()
 
@@ -149,5 +154,8 @@ def solve(data: pb.Data, maxTime: int, verbose: bool) -> pb.Solution:
         for v in model.vars:
             if abs(v.x) > 1e-6: # only printing non-zeros
                 print('{} : {}'.format(v.name, v.x))
-    
-    return pb.Solution(np.zeros(data.nbProcess), model.objective_value)
+                
+    return pb.Solution(
+        np.array([[i for i, v in enumerate(a) if abs(v.x) > 1e-6][0] for a in vars.current_assignments]), 
+        model.objective_value
+    )
