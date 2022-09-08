@@ -3,7 +3,6 @@ import sys
 import parser
 import problem as pb
 import checker
-import solver
 from solver import *
 
 def mainFunction(instanceFilename: str, assignmentFilename: str, verbose: bool, maxTime: int):
