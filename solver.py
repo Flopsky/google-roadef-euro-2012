@@ -29,7 +29,7 @@ def define_variables(data: pb.Data, model: Model):
     return ProblemVariables(
         [
             [
-                model.add_var(var_type=BINARY, name="XXs" + str(i) + str(j))
+                model.add_var(var_type=BINARY, name=f"x_{i}_{j}")
                 for j in range(data.nbMachines)
             ]
             for i in range(data.nbProcess)
@@ -39,19 +39,16 @@ def define_variables(data: pb.Data, model: Model):
             for i in range(data.nbProcess)
         ],
         [
-            model.add_var(var_type=BINARY, name=f"isMoving({i})")
+            model.add_var(var_type=BINARY, name=f"isMoving_{i}")
+            for i in range(data.nbProcess)
+        ],
+        [
+            [model.add_var(var_type=BINARY) for j in range(data.nbMachines)]
             for i in range(data.nbProcess)
         ],
         [
             [
-                model.add_var(var_type=BINARY, name=f"(M(p{i}) = m{j}) * isMoving({i})")
-                for j in range(data.nbMachines)
-            ]
-            for i in range(data.nbProcess)
-        ],
-        [
-            [
-                model.add_var(var_type=BINARY, name=f"Mc(p{i}) = m{j}")
+                model.add_var(var_type=BINARY, name=f"xc_{i}_{j}")
                 for j in range(data.nbMachines)
             ]
             for i in range(data.nbProcess)
@@ -59,7 +56,7 @@ def define_variables(data: pb.Data, model: Model):
         [
             [
                 model.add_var(
-                    var_type=BINARY, name=f"is_location_contain_service({i})({j})"
+                    var_type=BINARY, name=f"is_location_contain_service_{i}_{j})"
                 )
                 for j in range(data.nbLocations)
             ]
@@ -67,9 +64,7 @@ def define_variables(data: pb.Data, model: Model):
         ],
         [
             [
-                model.add_var(
-                    var_type=BINARY, name=f"process_is_in_neighborhood({i})({j})"
-                )
+                model.add_var(var_type=BINARY, name=f"pn_{i}_{j}")
                 for j in range(data.nbNeighborhoods)
             ]
             for i in range(data.nbProcess)
@@ -188,11 +183,11 @@ class ProblemConstraints:
                 for p in range(self.data.nbProcess)
                 if self.data.servicesProcess[p] in self.data.dependencies[s]
             ]
+
             for process_a in process_in_service_assignements:
                 for process_b in process_in_dependent_service_assignements:
-                    for n_a, n_b in zip(process_a, process_b):
-                        self.model += n_a == n_b
-                        s
+                    for n_a in process_a:
+                        n_a <= xsum(n_b for n_b in process_b)
 
     def machine_has_enough_capacity(self):
         for m in range(self.data.nbMachines):
@@ -235,8 +230,8 @@ class ProblemObjectives:
         self.model = model
         self.vars = vars
 
-    def max0(self, x: LinExpr, name: str) -> Var:
-        z = self.model.add_var(var_type=INTEGER, name=name)
+    def max0(self, x: LinExpr) -> Var:
+        z = self.model.add_var(var_type=INTEGER)
         self.model += z >= x
         self.model += z >= 0
         return z
@@ -256,10 +251,7 @@ class ProblemObjectives:
         return self.var(
             xsum(
                 xsum(
-                    self.max0(
-                        self.U(m, r) - self.data.softResCapacities[m, r],
-                        f"max(0, U({m}, {r}) - SC({m}, {r}))",
-                    )
+                    self.max0(self.U(m, r) - self.data.softResCapacities[m, r])
                     for m in range(
                         self.data.nbMachines
                     )  # Soft ressource capacity of a machine
@@ -281,7 +273,6 @@ class ProblemObjectives:
                         self.data.balanceTriples[b].target
                         * A(m, self.data.balanceTriples[b].resource1)
                         - A(m, self.data.balanceTriples[b].resource2),
-                        f"max(0, target * A({m},{self.data.balanceTriples[b].resource1}) - A({m},{self.data.balanceTriples[b].resource2}))",
                     )
                     for m in range(self.data.nbMachines)
                 )
