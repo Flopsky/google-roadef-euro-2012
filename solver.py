@@ -226,18 +226,19 @@ class ProblemObjectives:
         self.model += expr == x
         return expr
 
+    def U(self, m, r):
+        return xsum(
+            self.vars.current_assignments[p][m] * self.data.processReq[p, r]
+            for p in range(self.data.nbProcess)
+        )
+
     def load_cost(self):
         return self.var(
             xsum(
                 xsum(
                     self.max0(
-                        xsum(
-                            self.vars.current_assignments[p][m]
-                            * self.data.processReq[p, r]
-                            for p in range(self.data.nbProcess)
-                        )
-                        - self.data.softResCapacities[m, r],
-                        f"Sum(max(0, U({m}, {r}) - SC({m}, {r})))",
+                        self.U(m, r) - self.data.softResCapacities[m, r],
+                        f"max(0, U({m}, {r}) - SC({m}, {r}))",
                     )
                     for m in range(
                         self.data.nbMachines
@@ -249,10 +250,27 @@ class ProblemObjectives:
         )
 
     def balance_cost(self):
-        pass
+        def A(m, r):
+            return self.data.hardResCapacities[m, r] - self.U(m, r)
+
+        return self.var(
+            xsum(
+                xsum(
+                    self.max0(
+                        self.data.balanceTriples[b].target
+                        * A(m, self.data.balanceTriples[b].resource1)
+                        - A(m, self.data.balanceTriples[b].resource2),
+                        f"max(0, target * A({m},{self.data.balanceTriples[b].resource1}) - A({m},{self.data.balanceTriples[b].resource2}))",
+                    )
+                    for m in range(self.data.nbMachines)
+                )
+                for b in range(self.data.nbBalanceTriples)
+            ),
+            "balanceCost",
+        )
 
     def total(self):
-        self.model.objective = minimize(self.load_cost())
+        self.model.objective = minimize(self.load_cost() + self.balance_cost())
 
 
 def solve(data: pb.Data, maxTime: int, verbose: bool) -> pb.Solution:
@@ -276,6 +294,7 @@ def solve(data: pb.Data, maxTime: int, verbose: bool) -> pb.Solution:
     # Objective
     objective = ProblemObjectives(data, model, vars)
     objective.total()
+    objective.balance_cost()
 
     model.write("model.lp")
 
