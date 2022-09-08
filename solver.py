@@ -91,6 +91,10 @@ class ProblemConstraints:
                 for process_b in process_in_dependent_service_assignements:
                     for n_a, n_b in zip(process_a, process_b):
                         self.model += n_a == n_b
+    def machine_has_enough_capacity(self):
+        for m in range(self.data.nbMachines):
+            for r in range(self.data.nbResources):
+                self.model += xsum(self.vars.current_assignments[p][m] * self.data.processReq[p][r] for p in range(self.data.nbProcess)) <= self.data.hardResCapacities[m][r] #hardResCapacities correspond a la capacité de la machine et non a safeResCapacities
 
     def transient_usage(self):
         pass
@@ -125,6 +129,7 @@ def solve(data: pb.Data, maxTime: int, verbose: bool) -> pb.Solution:
     constraints.process_is_reassigned_to_a_new_machine()
     constraints.process_is_moving()
     constraints.current_assignments()
+    constraints.machine_has_enough_capacity()
     constraints.conflicts()
     constraints.spread()
     constraints.dependency()
