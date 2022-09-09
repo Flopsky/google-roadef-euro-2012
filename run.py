@@ -36,8 +36,8 @@ def mainFunction(
 
 
 if __name__ == "__main__":
-    instanceFilename = "data/dataA/model_a1_1.txt"
-    assignmentFilename = "data/dataA/assignment_a1_1.txt"
+    instanceFilename = "data/dataA/model_a1_3.txt"
+    assignmentFilename = "data/dataA/assignment_a1_3.txt"
     timeLimit = 300
 
     if len(sys.argv) == 4:

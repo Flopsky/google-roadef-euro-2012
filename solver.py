@@ -4,7 +4,7 @@ from inspect import _void
 from modulefinder import Module
 from typing import NamedTuple, TypeVar
 from mip import *
-import itertools
+from tqdm import tqdm
 
 import problem as pb
 
@@ -75,7 +75,9 @@ class ProblemConstraints:
         self.vars = vars
 
     def process_is_assigned_to_only_one_machine(self):
-        for p in range(self.data.nbProcess):
+        for p in tqdm(
+            range(self.data.nbProcess), desc="process_is_assigned_to_only_one_machine"
+        ):
             self.model += (
                 xsum(self.vars.assignments[p][m] for m in range(self.data.nbMachines))
                 <= 1,
@@ -83,7 +85,9 @@ class ProblemConstraints:
             )
 
     def process_is_reassigned_to_a_new_machine(self):
-        for p in range(self.data.nbProcess):
+        for p in tqdm(
+            range(self.data.nbProcess), desc="process_is_reassigned_to_a_new_machine"
+        ):
             for m in range(self.data.nbMachines):
                 self.model += (
                     self.vars.initial_assignments[p][m] + self.vars.assignments[p][m]
@@ -92,7 +96,7 @@ class ProblemConstraints:
                 )
 
     def process_is_moving(self):
-        for p in range(self.data.nbProcess):
+        for p in tqdm(range(self.data.nbProcess), desc="process_is_moving"):
             self.model += (
                 xsum(self.vars.assignments[p][m] for m in range(self.data.nbMachines))
                 == self.vars.process_is_moving[p],
@@ -100,7 +104,7 @@ class ProblemConstraints:
             )
 
     def current_assignments(self):
-        for p in range(self.data.nbProcess):
+        for p in tqdm(range(self.data.nbProcess), desc="current_assignments"):
             for m in range(self.data.nbMachines):
                 # Linearization of a[m] * self.vars.process_is_moving[a_i]
                 self.model += (
@@ -129,7 +133,7 @@ class ProblemConstraints:
         ]
 
     def machine_has_enough_capacity(self):
-        for m in range(self.data.nbMachines):
+        for m in tqdm(range(self.data.nbMachines), desc="machine_has_enough_capacity"):
             for r in range(self.data.nbResources):
                 # hardResCapacities corresponds to the capacity of the machine and not safeResCapacities
                 self.model += (
@@ -141,14 +145,14 @@ class ProblemConstraints:
                 )
 
     def conflicts(self):
-        for s in range(self.data.nbServices):
+        for s in tqdm(range(self.data.nbServices), desc="conflicts"):
             for m in range(self.data.nbMachines):
                 self.model += (
                     xsum(p[m] for p in self.process_in_service_assignements(s)) <= 1
                 )
 
     def spread(self):
-        for s in range(self.data.nbServices):
+        for s in tqdm(range(self.data.nbServices), desc="spread"):
             for l in range(self.data.nbLocations):
                 process_in_location = [
                     p[m]
@@ -177,25 +181,29 @@ class ProblemConstraints:
                     for m in range(self.data.nbMachines)
                     if self.data.neighborhoods[m] == n
                 )
-        for s in range(self.data.nbServices):
+        for s in tqdm(range(self.data.nbServices), desc="dependency"):
             for d in self.data.dependencies[s]:
                 for n in range(self.data.nbNeighborhoods):
+                    number_of_process_of_d_in_neighborhood = xsum(
+                        self.vars.current_assignments[pb][m]
+                        for m in range(self.data.nbMachines)
+                        if self.data.neighborhoods[m] == n
+                        for pb in range(self.data.nbProcess)
+                        if self.data.servicesProcess[pb] == d
+                    )
                     for pa in range(self.data.nbProcess):
                         if self.data.servicesProcess[pa] == s:
-                            self.model += xsum(
-                                self.vars.current_assignments[pa][m]
-                                for m in range(self.data.nbMachines)
-                                if self.data.neighborhoods[m] == n
-                            ) <= xsum(
-                                self.vars.current_assignments[pb][m]
-                                for m in range(self.data.nbMachines)
-                                if self.data.neighborhoods[m] == n
-                                for pb in range(self.data.nbProcess)
-                                if self.data.servicesProcess[pb] == d
+                            self.model += (
+                                xsum(
+                                    self.vars.current_assignments[pa][m]
+                                    for m in range(self.data.nbMachines)
+                                    if self.data.neighborhoods[m] == n
+                                )
+                                <= number_of_process_of_d_in_neighborhood
                             )
 
     def transient_usage(self):
-        for m in range(self.data.nbMachines):
+        for m in tqdm(range(self.data.nbMachines), desc="transient_usage"):
             for m0 in range(m + 1, self.data.nbMachines - 1):
                 for r in range(self.data.nbResources):
                     self.model += xsum(
@@ -229,11 +237,6 @@ class ProblemObjectives:
         self.model += z >= 0
         return z
 
-    def var(self, expr: LinExpr, name: str) -> Var:
-        x = self.model.add_var(var_type=INTEGER, name=name)
-        self.model += expr == x
-        return expr
-
     def U(self, m, r):
         return xsum(
             self.vars.current_assignments[p][m] * self.data.processReq[p, r]
@@ -241,48 +244,41 @@ class ProblemObjectives:
         )
 
     def load_cost(self):
-        return self.var(
+        return xsum(
             xsum(
-                xsum(
-                    self.max0(self.U(m, r) - self.data.softResCapacities[m, r])
-                    for m in range(
-                        self.data.nbMachines
-                    )  # Soft ressource capacity of a machine
-                )
-                * self.data.weightLoadCost[r]
-                for r in range(self.data.nbResources)
-            ),
-            "loadCost",
+                self.max0(self.U(m, r) - self.data.softResCapacities[m, r])
+                for m in range(
+                    self.data.nbMachines
+                )  # Soft ressource capacity of a machine
+            )
+            * self.data.weightLoadCost[r]
+            for r in range(self.data.nbResources)
         )
 
     def balance_cost(self):
         def A(m, r):
             return self.data.hardResCapacities[m, r] - self.U(m, r)
 
-        return self.var(
+        return xsum(
             xsum(
-                xsum(
-                    self.max0(
-                        self.data.balanceTriples[b].target
-                        * A(m, self.data.balanceTriples[b].resource1)
-                        - A(m, self.data.balanceTriples[b].resource2),
-                    )
-                    for m in range(self.data.nbMachines)
+                self.max0(
+                    self.data.balanceTriples[b].target
+                    * A(m, self.data.balanceTriples[b].resource1)
+                    - A(m, self.data.balanceTriples[b].resource2),
                 )
-                * self.data.balanceTriples[b].weight
-                for b in range(self.data.nbBalanceTriples)
-            ),
-            "balanceCost",
+                for m in range(self.data.nbMachines)
+            )
+            * self.data.balanceTriples[b].weight
+            for b in range(self.data.nbBalanceTriples)
         )
 
     def process_move_cost(self):
-        return self.var(
+        return (
             xsum(
                 self.vars.process_is_moving[p] * self.data.processMoveCost[p]
                 for p in range(self.data.nbProcess)
             )
-            * self.data.processMoveWeight,
-            "process_move_cost",
+            * self.data.processMoveWeight
         )
 
     def service_move_cost(self):
@@ -299,7 +295,7 @@ class ProblemObjectives:
                 for s in range(self.data.nbServices)
             ]
         )
-        scp = self.model.add_var(var_type=INTEGER, name="service_move_cost")
+        scp = self.model.add_var(var_type=INTEGER)
         for s in range(self.data.nbServices):
             x = self.model.add_var(
                 var_type=INTEGER,
@@ -329,7 +325,7 @@ class ProblemObjectives:
         return scp * self.data.serviceMoveWeight
 
     def machine_move_cost(self):
-        return self.var(
+        return (
             xsum(
                 xsum(
                     (
@@ -343,8 +339,7 @@ class ProblemObjectives:
                 )
                 for p in range(self.data.nbProcess)
             )
-            * self.data.machineMoveWeight,
-            "machine_move_cost",
+            * self.data.machineMoveWeight
         )
 
     def total(self):
@@ -358,11 +353,12 @@ class ProblemObjectives:
 
 
 def solve(data: pb.Data, maxTime: int, verbose: bool) -> pb.Solution:
-    model = Model()
+    model = Model(solver_name="GUROBI")
 
     # Variables
     vars = define_variables(data, model)
 
+    print("Add constraints")
     # Constraints
     constraints = ProblemConstraints(data, model, vars)
     constraints.process_is_assigned_to_only_one_machine()
@@ -375,12 +371,15 @@ def solve(data: pb.Data, maxTime: int, verbose: bool) -> pb.Solution:
     constraints.dependency()
     constraints.transient_usage()
 
+    print("Add objectives")
     # Objective
     objective = ProblemObjectives(data, model, vars)
     objective.total()
 
+    print("Write model")
     model.write("model.lp")
 
+    print("Start optimization")
     status = model.optimize(max_seconds=maxTime)
 
     if status == OptimizationStatus.INFEASIBLE:
