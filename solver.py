@@ -211,7 +211,6 @@ class ProblemConstraints:
                             (1 - self.vars.initial_assignments[p][m0])
                             * self.vars.current_assignments[p][m]
                         )
-                        * self.data.transientStatus[r]
                         * self.data.processReq[p][r]
                         for p in range(self.data.nbProcess)
                     ) <= self.data.hardResCapacities[m][r] - xsum(
@@ -219,7 +218,6 @@ class ProblemConstraints:
                             (self.vars.initial_assignments[p][m0])
                             * self.vars.current_assignments[p][m]
                         )
-                        * self.data.transientStatus[r]
                         * self.data.processReq[p][r]
                         for p in range(self.data.nbProcess)
                     )
